@@ -238,7 +238,7 @@ async def get_campaign():
 
     campaign_dict = dict(
         id=data["campaign_id"],
-        url=f"https://t.me/TestWACom_bot/campaign?startapp={data['campaign_id']}",
+        url=f"https://t.me/JourneysBuilderBot/campaign?startapp={data['campaign_id']}",
         title=campaign.title,
         desc=campaign.desc,
         one_by_access=campaign.one_by_access,
