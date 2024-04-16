@@ -19,6 +19,7 @@ from sqlalchemy import select
 import models
 from redis.commands.json.path import Path
 import aiofiles
+from glob_regex import glob_re
 
 
 UPLOAD_FOLDER = 'static/uploads'
@@ -62,22 +63,30 @@ async def check_init_data():
 @app.post("/api/createCampaign")
 async def create_campaign():
     data = request.form
-    file = request.files['media']
+
+    with session() as open_session:
+        campaign = open_session.execute(select(models.sql.Campaign).filter_by(id=data["id"]))
+        campaign: models.sql.Campaign = campaign.scalars().first()
+
+    if campaign:
+        return jsonify(dict(status=400))
+
+    # file = request.files['media']
 
     if data["one_by_access"] == "true":
         one_by_access = True
     else:
         one_by_access = False
 
-    if not file:
-        pass
-
-    file_extension = get_file_extension(file.filename)
-    if file_extension not in ALLOWED_EXTENSIONS:
-        pass
-
-    # filename = secure_filename(file.filename)
-    file.save(os.path.join(app.config['UPLOAD_FOLDER'], f"campaign_media_{data['id']}.jpg"))
+    # if not file:
+    #     pass
+    #
+    # file_extension = get_file_extension(file.filename)
+    # if file_extension not in ALLOWED_EXTENSIONS:
+    #     pass
+    #
+    # # filename = secure_filename(file.filename)
+    # file.save(os.path.join(app.config['UPLOAD_FOLDER'], f"campaign_media_{data['id']}.jpg"))
     # return redirect(url_for('uploaded_file', filename=filename))
 
     with session() as open_session:
@@ -101,31 +110,47 @@ async def create_campaign():
 @app.post("/api/editCampaign")
 async def edit_campaign():
     data = request.form
-    file = request.files['media']
 
-    if not file:
-        pass
+    with session() as open_session:
+        campaign = open_session.execute(select(models.sql.Campaign).filter_by(id=data["id"]))
+        campaign: models.sql.Campaign = campaign.scalars().first()
 
-    file_extension = get_file_extension(file.filename)
-    if file_extension not in ALLOWED_EXTENSIONS:
-        pass
+        if campaign:
+            open_session.delete(campaign)
+            open_session.commit()
+
+    # file = request.files['media']
+
+    if data["one_by_access"] == "true":
+        one_by_access = True
     else:
-        file.save(os.path.join(app.config['UPLOAD_FOLDER'], f"campaign_media_{data['id']}.jpg"))
+        one_by_access = False
 
-    # filename = secure_filename(file.filename)
-
+    # if not file:
+    #     pass
+    #
+    # file_extension = get_file_extension(file.filename)
+    # if file_extension not in ALLOWED_EXTENSIONS:
+    #     pass
+    #
+    # # filename = secure_filename(file.filename)
+    # file.save(os.path.join(app.config['UPLOAD_FOLDER'], f"campaign_media_{data['id']}.jpg"))
     # return redirect(url_for('uploaded_file', filename=filename))
 
-    # with session() as open_session:
-    #     campaign = open_session.execute(select(models.sql.Campaign).filter_by(id=data["campaign_id"]))
-    #     campaign: models.sql.Campaign = campaign.scalars().first()
-    #
-    #     campaign.title = data["title"]
-    #     campaign.desc = data["desc"]
-    #     campaign.reward_amount = data["reward_amount"]
-    #     campaign.reward_currency = data["reward_currency"]
-    #
-    #     open_session.commit()
+    with session() as open_session:
+        new_campaign = models.sql.Campaign(
+            id=data["id"],
+            title=data["title"],
+            desc=data["desc"],
+            one_by_access=one_by_access,
+            reward_currency=data["reward_currency"],
+            reward_amount=data["reward_amount"],
+            finish_date=data["finish_date"],
+            finish_time=data["finish_time"],
+            created_at=datetime.now()
+        )
+        open_session.merge(new_campaign)
+        open_session.commit()
 
     return jsonify(dict(status=200))
 
@@ -213,6 +238,7 @@ async def get_campaign():
 
     campaign_dict = dict(
         id=data["campaign_id"],
+        url=f"https://t.me/TestWACom_bot/campaign?startapp={data['campaign_id']}",
         title=campaign.title,
         desc=campaign.desc,
         one_by_access=campaign.one_by_access,
@@ -491,6 +517,25 @@ async def set_done_task():
     return jsonify(dict(status=200))
 
 
+@app.post("/api/uploadCampaignImage")
+async def upload_campaign_image():
+    data = request.form
+    file = request.files['media']
+
+    if not file:
+        pass
+
+    file_extension = get_file_extension(file.filename)
+    if file_extension not in ALLOWED_EXTENSIONS:
+        pass
+
+    # filename = secure_filename(file.filename)
+    file.save(os.path.join(app.config['UPLOAD_FOLDER'], f"campaign_media_{data['id']}.jpg"))
+    # return redirect(url_for('uploaded_file', filename=filename))
+
+    return jsonify(dict(status=200))
+
+
 @app.post("/api/uploadRewardImage")
 async def upload_reward():
     data = request.form
@@ -508,6 +553,53 @@ async def upload_reward():
     # return redirect(url_for('uploaded_file', filename=filename))
 
     return jsonify(dict(status=200))
+
+@app.post("/api/uploadTaskStories")
+async def uploadTaskStory():
+    data = request.form
+
+    for name in request.files:
+        file = request.files[name]
+        file.save(os.path.join(app.config['UPLOAD_FOLDER'], f"story_{data['story_id']}_{name}.jpg"))
+
+    # if not file:
+    #     pass
+    #
+    # file_extension = get_file_extension(file.filename)
+    # if file_extension not in ALLOWED_EXTENSIONS:
+    #     pass
+    #
+    # # filename = secure_filename(file.filename)
+
+    # # return redirect(url_for('uploaded_file', filename=filename))
+
+    return jsonify(dict(status=200))
+
+
+@app.post("/api/getStories")
+async def get_stories():
+    data = request.json
+    print(data['story_id'])
+
+    stories_path = f"story_{data['story_id']}_media_(\d+).jpg"
+
+    stories = glob_re(stories_path, os.listdir(UPLOAD_FOLDER))
+
+    for s in stories:
+        stories.append(f"/api/{app.config['UPLOAD_FOLDER']}/{s}")
+
+    # if not file:
+    #     pass
+    #
+    # file_extension = get_file_extension(file.filename)
+    # if file_extension not in ALLOWED_EXTENSIONS:
+    #     pass
+    #
+    # # filename = secure_filename(file.filename)
+
+    # # return redirect(url_for('uploaded_file', filename=filename))
+    print(stories)
+    return jsonify(dict(stories=stories))
 
 # def test():
 #     r = redis.StrictRedis(

@@ -11,5 +11,5 @@ services:
 
 networks:
   default:
-    name: starfall-network
+    name: nick-network
     external: true
