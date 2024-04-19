@@ -6,6 +6,7 @@
 .isort.cfg
 Makefile
 README.md
+static/
 
 # Cache
 *.py[cod]
