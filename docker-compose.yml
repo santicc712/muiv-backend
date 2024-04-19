@@ -6,8 +6,6 @@ services:
     restart: always
     command: gunicorn --bind 0.0.0.0:5001 --log-level debug app:app
     env_file: .env
-    volumes:
-      - ./static/:./static/
     ports:
       - "5001:5001"
 

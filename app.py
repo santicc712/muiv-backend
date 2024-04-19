@@ -20,6 +20,7 @@ import models
 from redis.commands.json.path import Path
 import aiofiles
 from get_filepaths import get_filepaths_with_oswalk
+import boto3
 
 
 UPLOAD_FOLDER = 'static/uploads'
@@ -35,6 +36,22 @@ db = database.implement.PostgreSQL(
 )
 
 session = database.manager.create_session(db)
+s3 = boto3.client(
+    's3',
+    aws_access_key_id=config.AWS_ACCESS_KEY_ID,
+    aws_secret_access_key=config.AWS_SECRET_ACCESS_KEY,
+    endpoint_url=config.AWS_ENDPOINT_URL,
+    region_name=config.AWS_DEFAULT_REGION
+)
+bucket_name = 'a7f02a62-e15c7451-cea6-4e82-9754-31fa55629677'
+
+
+def upload_static_file(file_path, key):
+    s3.Object(bucket_name, key).upload_file(file_path)
+
+
+def get_static_file_url(key):
+    return f"https://{bucket_name}.s3.timeweb.cloud/{key}"
 
 
 async def get_user_photo_url(user_id: int):
@@ -71,23 +88,11 @@ async def create_campaign():
     if campaign:
         return jsonify(dict(status=400))
 
-    # file = request.files['media']
-
     if data["one_by_access"] == "true":
         one_by_access = True
     else:
         one_by_access = False
 
-    # if not file:
-    #     pass
-    #
-    # file_extension = get_file_extension(file.filename)
-    # if file_extension not in ALLOWED_EXTENSIONS:
-    #     pass
-    #
-    # # filename = secure_filename(file.filename)
-    # file.save(os.path.join(app.config['UPLOAD_FOLDER'], f"campaign_media_{data['id']}.jpg"))
-    # return redirect(url_for('uploaded_file', filename=filename))
     finish_date = data["finish_date"]
     if not finish_date:
         finish_date = "active"
@@ -139,23 +144,10 @@ async def edit_campaign():
             open_session.delete(campaign)
             open_session.commit()
 
-    # file = request.files['media']
-
     if data["one_by_access"] == "true":
         one_by_access = True
     else:
         one_by_access = False
-
-    # if not file:
-    #     pass
-    #
-    # file_extension = get_file_extension(file.filename)
-    # if file_extension not in ALLOWED_EXTENSIONS:
-    #     pass
-    #
-    # # filename = secure_filename(file.filename)
-    # file.save(os.path.join(app.config['UPLOAD_FOLDER'], f"campaign_media_{data['id']}.jpg"))
-    # return redirect(url_for('uploaded_file', filename=filename))
 
     with session() as open_session:
         new_campaign = models.sql.Campaign(
@@ -208,17 +200,19 @@ async def get_campaigns():
             if hours_left < 1:
                 time_left_value = 0
 
+        campaign_image = f"{UPLOAD_FOLDER}/campaign_media_{c.id}.jpg"
+        reward_image = f"{UPLOAD_FOLDER}/reward_media_{c.id}.jpg"
         events.append(
             dict(
                 id=c.id,
-                image=f"/api/static/uploads/campaign_media_{c.id}.jpg",
+                image=get_static_file_url(campaign_image),
                 title=c.title,
                 desc=c.desc,
                 time_left=time_left_value,
                 time_unit=time_unit,
                 reward_currency=c.reward_currency,
                 reward_amount=c.reward_amount,
-                reward_image=f"/api/static/uploads/reward_media_{c.id}.jpg",
+                reward_image=get_static_file_url(reward_image),
             )
         )
 
@@ -229,7 +223,6 @@ async def get_campaigns():
 @app.post("/api/getCampaign")
 async def get_campaign():
     data = request.json
-    print(data["campaign_id"])
     with session() as open_session:
         campaign = open_session.execute(select(models.sql.Campaign).filter_by(id=data["campaign_id"]))
         campaign: models.sql.Campaign = campaign.scalars().first()
@@ -262,6 +255,8 @@ async def get_campaign():
         if hours_left < 1:
             time_left_value = 0
 
+    campaign_image = f"{UPLOAD_FOLDER}/campaign_media_{campaign.id}.jpg"
+    reward_image = f"{UPLOAD_FOLDER}/reward_media_{campaign.id}.jpg"
     campaign_dict = dict(
         id=data["campaign_id"],
         url=f"https://t.me/JourneysBuilderBot/campaign?startapp={data['campaign_id']}",
@@ -270,10 +265,10 @@ async def get_campaign():
         one_by_access=campaign.one_by_access,
         time_left=time_left_value,
         time_unit=time_unit,
-        image=f"/api/static/uploads/campaign_media_{campaign.id}.jpg",
+        image=get_static_file_url(campaign_image),
         reward_currency=campaign.reward_currency,
         reward_amount=campaign.reward_amount,
-        reward_image=f"/api/static/uploads/reward_media_{campaign.id}.jpg",
+        reward_image=get_static_file_url(reward_image),
 
     )
 
@@ -282,40 +277,6 @@ async def get_campaign():
 
 def get_file_extension(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower()
-
-#
-# @app.post("/api/uploadImage")
-# async def upload_image():
-#     data = request.form
-#     print(request.files)
-#     # if 'file' not in request.files:
-#     #     flash('No file part')
-#     #     return redirect(request.url)
-#
-#     file = request.files['image']
-#
-#     if file and allowed_file(file.filename):
-#         filename = secure_filename(file.filename)
-#         file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
-#         return redirect(url_for('uploaded_file',
-#                                 filename=filename))
-#     # print(data)
-    #
-    # print(type(data["image"]))
-    # print(data["image"])
-    # # with session() as open_session:
-    # #     new_campaign = models.sql.Campaign(
-    # #         id='test',
-    # #         title='test',
-    # #         desc='test',
-    # #         reward_currency='1',
-    # #         reward_amount='test',
-    # #         image=data["image"]
-    # #     )
-    # #     open_session.merge(new_campaign)
-    # #     open_session.commit()
-    #
-    # return jsonify(dict(image=data["image"]))
 
 
 @app.get("/api/getRandomHash")
@@ -355,7 +316,6 @@ async def get_task():
     campaign_id: str = request.json["campaign_id"]
     user_id: str = request.json["user_id"]
     one_by_one_access = request.json["one_by_access"]
-    print(one_by_one_access)
 
     r = redis.StrictRedis(
         host=config.REDIS_HOST,
@@ -508,17 +468,19 @@ async def get_done_campaigns():
                 if hours_left < 1:
                     time_left_value = 0
 
+            campaign_image = f"{UPLOAD_FOLDER}/campaign_media_{c}.jpg"
+            reward_image = f"{UPLOAD_FOLDER}/reward_media_{c}.jpg"
             events.append(
                 dict(
                     id=c,
-                    image=f"/api/static/uploads/campaign_media_{c}.jpg",
+                    image=get_static_file_url(campaign_image),
                     title=done_campaign.title,
                     desc=done_campaign.desc,
                     time_left=time_left_value,
                     time_unit=time_unit,
                     reward_currency=done_campaign.reward_currency,
                     reward_amount=done_campaign.reward_amount,
-                    reward_image=f"/api/static/uploads/reward_media_{c}.jpg",
+                    reward_image=get_static_file_url(reward_image),
                 )
             )
 
@@ -558,9 +520,9 @@ async def upload_campaign_image():
     if file_extension not in ALLOWED_EXTENSIONS:
         pass
 
-    # filename = secure_filename(file.filename)
     file.save(os.path.join(app.config['UPLOAD_FOLDER'], f"campaign_media_{data['id']}.jpg"))
-    # return redirect(url_for('uploaded_file', filename=filename))
+    filepath = f"{UPLOAD_FOLDER}/campaign_media_{data['id']}.jpg"
+    upload_static_file(filepath, filepath)
 
     return jsonify(dict(status=200))
 
@@ -578,8 +540,11 @@ async def upload_reward():
         pass
 
     file.save(os.path.join(app.config['UPLOAD_FOLDER'], f"reward_media_{data['id']}.jpg"))
+    filepath = f"{UPLOAD_FOLDER}/reward_media_{data['id']}.jpg"
+    upload_static_file(filepath, filepath)
 
     return jsonify(dict(status=200))
+
 
 @app.post("/api/uploadTaskStories")
 async def uploadTaskStory():
@@ -588,6 +553,8 @@ async def uploadTaskStory():
     for name in request.files:
         file = request.files[name]
         file.save(os.path.join(app.config['UPLOAD_FOLDER'], f"story_{data['story_id']}_{name}.jpg"))
+        filepath = f"{UPLOAD_FOLDER}/story_{data['story_id']}_{name}.jpg"
+        upload_static_file(filepath, f"static/stories/{data['story_id']}/{name}.jpg")
 
     return jsonify(dict(status=200))
 
@@ -595,10 +562,10 @@ async def uploadTaskStory():
 @app.post("/api/getStories")
 async def get_stories():
     data = request.json
-    stories_path = f"story_{data['story_id']}_media_(\d+).jpg"
-    stories = get_filepaths_with_oswalk(UPLOAD_FOLDER, stories_path)
-    return_stories = [f"/api/{s}" for s in stories]
-    return jsonify(dict(stories=return_stories))
+    folder_name = f"static/stories/{data['story_id']}"
+    response = s3.list_objects(Bucket=bucket_name, Prefix=folder_name)
+    stories = [get_static_file_url(obj['Key']) for obj in response['Contents'] if obj['Key'].endswith('.jpg')]
+    return jsonify(dict(stories=stories))
 
 
 if __name__ == "__main__":
