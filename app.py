@@ -19,7 +19,7 @@ from sqlalchemy import select
 import models
 from redis.commands.json.path import Path
 import aiofiles
-from glob_regex import glob_re
+from get_filepaths import get_filepaths_with_oswalk
 
 
 UPLOAD_FOLDER = 'static/uploads'
@@ -88,6 +88,9 @@ async def create_campaign():
     # # filename = secure_filename(file.filename)
     # file.save(os.path.join(app.config['UPLOAD_FOLDER'], f"campaign_media_{data['id']}.jpg"))
     # return redirect(url_for('uploaded_file', filename=filename))
+    finish_date = data["finish_date"]
+    if not finish_date:
+        finish_date = "active"
 
     with session() as open_session:
         new_campaign = models.sql.Campaign(
@@ -97,7 +100,7 @@ async def create_campaign():
             one_by_access=one_by_access,
             reward_currency=data["reward_currency"],
             reward_amount=data["reward_amount"],
-            finish_date=data["finish_date"],
+            finish_date=finish_date,
             finish_time=data["finish_time"],
             created_at=datetime.now()
         )
@@ -105,6 +108,23 @@ async def create_campaign():
         open_session.commit()
 
     return jsonify(dict(status=200))
+
+
+@app.post("/api/deleteCampaign")
+async def delete_campaign():
+    data = request.json
+    status = None
+
+    with session() as open_session:
+        campaign = open_session.execute(select(models.sql.Campaign).filter_by(id=data["campaign_id"]))
+        campaign: models.sql.Campaign = campaign.scalars().first()
+
+        if campaign:
+            open_session.delete(campaign)
+            open_session.commit()
+            status = 200
+
+    return jsonify(dict(status=status))
 
 
 @app.post("/api/editCampaign")
@@ -167,7 +187,9 @@ async def get_campaigns():
         time_unit = ""
         time_left_value = 0
 
-        if re.findall("\d{2}/\d{2}/\d{4}", str(c.finish_date)) and re.findall("\d{2}:\d{2}", str(c.finish_time)):
+        if str(c.finish_date) == "active":
+            time_left_value = 999
+        elif re.findall("\d{2}/\d{2}/\d{4}", str(c.finish_date)) and re.findall("\d{2}:\d{2}", str(c.finish_time)):
             finish_datetime_str = c.finish_date + " " + c.finish_time
             finish_datetime = datetime.strptime(finish_datetime_str, "%d/%m/%Y %H:%M")
             now_datetime = datetime.now()
@@ -195,7 +217,8 @@ async def get_campaigns():
                 time_left=time_left_value,
                 time_unit=time_unit,
                 reward_currency=c.reward_currency,
-                reward_amount=c.reward_amount
+                reward_amount=c.reward_amount,
+                reward_image=f"/api/static/uploads/reward_media_{c.id}.jpg",
             )
         )
 
@@ -214,7 +237,10 @@ async def get_campaign():
     time_unit = ""
     time_left_value = 0
 
-    if re.findall("\d{2}/\d{2}/\d{4}", str(campaign.finish_date)) and re.findall("\d{2}:\d{2}", str(campaign.finish_time)):
+    if str(campaign.finish_date) == "active":
+        time_left_value = 999
+
+    elif re.findall("\d{2}/\d{2}/\d{4}", str(campaign.finish_date)) and re.findall("\d{2}:\d{2}", str(campaign.finish_time)):
         # "12/02/2024" + "10:00"
         finish_datetime_str = campaign.finish_date + " " + campaign.finish_time
 
@@ -460,7 +486,9 @@ async def get_done_campaigns():
                 done_campaign = open_session.execute(select(models.sql.Campaign).filter_by(id=c))
                 done_campaign: models.sql.Campaign = done_campaign.scalars().first()
 
-            if (re.findall("\d{2}/\d{2}/\d{4}", str(done_campaign.finish_date))
+            if str(done_campaign.finish_date) == "active":
+                time_left_value = 999
+            elif (re.findall("\d{2}/\d{2}/\d{4}", str(done_campaign.finish_date))
                     and re.findall("\d{2}:\d{2}", str(done_campaign.finish_time))):
                 finish_datetime_str = done_campaign.finish_date + " " + done_campaign.finish_time
                 finish_datetime = datetime.strptime(finish_datetime_str, "%d/%m/%Y %H:%M")
@@ -489,7 +517,8 @@ async def get_done_campaigns():
                     time_left=time_left_value,
                     time_unit=time_unit,
                     reward_currency=done_campaign.reward_currency,
-                    reward_amount=done_campaign.reward_amount
+                    reward_amount=done_campaign.reward_amount,
+                    reward_image=f"/api/static/uploads/reward_media_{c}.jpg",
                 )
             )
 
@@ -548,9 +577,7 @@ async def upload_reward():
     if file_extension not in ALLOWED_EXTENSIONS:
         pass
 
-    # filename = secure_filename(file.filename)
     file.save(os.path.join(app.config['UPLOAD_FOLDER'], f"reward_media_{data['id']}.jpg"))
-    # return redirect(url_for('uploaded_file', filename=filename))
 
     return jsonify(dict(status=200))
 
@@ -562,66 +589,17 @@ async def uploadTaskStory():
         file = request.files[name]
         file.save(os.path.join(app.config['UPLOAD_FOLDER'], f"story_{data['story_id']}_{name}.jpg"))
 
-    # if not file:
-    #     pass
-    #
-    # file_extension = get_file_extension(file.filename)
-    # if file_extension not in ALLOWED_EXTENSIONS:
-    #     pass
-    #
-    # # filename = secure_filename(file.filename)
-
-    # # return redirect(url_for('uploaded_file', filename=filename))
-
     return jsonify(dict(status=200))
 
 
 @app.post("/api/getStories")
 async def get_stories():
     data = request.json
-    print(data['story_id'])
-
     stories_path = f"story_{data['story_id']}_media_(\d+).jpg"
+    stories = get_filepaths_with_oswalk(UPLOAD_FOLDER, stories_path)
+    return_stories = [f"/api/{s}" for s in stories]
+    return jsonify(dict(stories=return_stories))
 
-    stories = glob_re(stories_path, os.listdir(UPLOAD_FOLDER))
-
-    for s in stories:
-        stories.append(f"/api/{app.config['UPLOAD_FOLDER']}/{s}")
-
-    # if not file:
-    #     pass
-    #
-    # file_extension = get_file_extension(file.filename)
-    # if file_extension not in ALLOWED_EXTENSIONS:
-    #     pass
-    #
-    # # filename = secure_filename(file.filename)
-
-    # # return redirect(url_for('uploaded_file', filename=filename))
-    print(stories)
-    return jsonify(dict(stories=stories))
-
-# def test():
-#     r = redis.StrictRedis(
-#         host=config.REDIS_HOST,
-#         port=config.REDIS_PORT,
-#         username=config.REDIS_USERNAME,
-#         password=config.REDIS_PASSWORD,
-#         db=0,
-#         decode_responses=True
-#     )
-#     jane = {
-#         'name': "Jane",
-#         'Age': {
-#             'value': 1
-#         },
-#         'Location': "Chawton"
-#         }
-#
-#     r.json().set('person:1', Path.root_path(), jane)
-#
-#     result = r.json().get('person:1')
-#     print(result)
 
 if __name__ == "__main__":
     app.run("localhost", port=5001)
