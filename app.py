@@ -36,15 +36,17 @@ db = database.implement.PostgreSQL(
 )
 
 session = database.manager.create_session(db)
-s3 = boto3.client(
-    's3',
+bucket_name = 'a7f02a62-e15c7451-cea6-4e82-9754-31fa55629677'
+
+data = dict(
     aws_access_key_id=config.AWS_ACCESS_KEY_ID,
     aws_secret_access_key=config.AWS_SECRET_ACCESS_KEY,
     endpoint_url=config.AWS_ENDPOINT_URL,
     region_name=config.AWS_DEFAULT_REGION
 )
-bucket_name = 'a7f02a62-e15c7451-cea6-4e82-9754-31fa55629677'
 
+sqs = boto3.client('sqs', **data)
+s3 = boto3.resource('s3', **data)
 
 def upload_static_file(file_path, key):
     s3.Object(bucket_name, key).upload_file(file_path)
@@ -563,7 +565,7 @@ async def uploadTaskStory():
 async def get_stories():
     data = request.json
     folder_name = f"static/stories/{data['story_id']}"
-    response = s3.list_objects(Bucket=bucket_name, Prefix=folder_name)
+    response = sqs.list_objects(Bucket=bucket_name, Prefix=folder_name)
     stories = [get_static_file_url(obj['Key']) for obj in response['Contents'] if obj['Key'].endswith('.jpg')]
     return jsonify(dict(stories=stories))
 
