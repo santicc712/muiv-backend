@@ -398,10 +398,15 @@ async def send_done_campaign_users():
             select(models.sql.DoneCampaign).filter_by(campaign_id=campaign_id))
         done_campaign_users: typing.List[models.sql.DoneCampaign] = done_campaign_users.scalars().all()
 
+        user_wallets = open_session.execute(
+            select(models.sql.UserWallet).filter_by(campaign_id=campaign_id))
+        user_wallets: typing.List[models.sql.UserWallet] = user_wallets.scalars().all()
+
     file = f"users_{campaign_id}.txt"
     async with aiofiles.open(file, mode='w') as f:
         for user in done_campaign_users:
-            await f.write(f"{user.username}|{user.user_id}\n")
+            user_wallet = [i.wallet for i in user_wallets if i.user_id == user.user_id]
+            await f.write(f"{user.username}|{user.user_id}|{user_wallet}\n")
 
     await bot.send_document(
         chat_id=user_id,
@@ -569,6 +574,30 @@ async def get_stories():
     stories = [get_static_file_url(obj['Key']) for obj in response['Contents'] if obj['Key'].endswith('.jpg')]
     return jsonify(dict(stories=stories))
 
+
+@app.post("/api/setUserWallet")
+async def set_user_wallet():
+    campaign_id: str = request.json["campaign_id"]
+    user_id: int = request.json["user_id"]
+    wallet: str = request.json["wallet"]
+
+    with session() as open_session:
+        user_wallet = open_session.execute(
+            select(models.sql.UserWallet).filter_by(user_id=user_id, campaign_id=campaign_id))
+        user_wallet = user_wallet.scalars().first()
+        if not user_wallet:
+            new_wallet = models.sql.UserWallet(
+                campaign_id=campaign_id,
+                user_id=user_id,
+                wallet=wallet[:50]
+            )
+            open_session.merge(new_wallet)
+        else:
+            user_wallet.wallet = wallet[:50]
+
+        open_session.commit()
+
+    return jsonify(dict(status=200))
 
 if __name__ == "__main__":
     app.run("localhost", port=5001)
