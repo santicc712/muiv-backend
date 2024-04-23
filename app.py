@@ -261,7 +261,7 @@ async def get_campaign():
     reward_image = f"{UPLOAD_FOLDER}/reward_media_{campaign.id}.jpg"
     campaign_dict = dict(
         id=data["campaign_id"],
-        url=f"https://t.me/JourneysBuilderBot/campaign?startapp={data['campaign_id']}",
+        url=f"https://t.me/RaiseAnon_bot/campaign?startapp={data['campaign_id']}",
         title=campaign.title,
         desc=campaign.desc,
         one_by_access=campaign.one_by_access,
