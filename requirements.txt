@@ -14,3 +14,4 @@ Werkzeug>=2.2.2
 redis~=5.0.1
 aiogram~=3.1.1
 boto3==1.34.87
+openpyxl~=3.1.2

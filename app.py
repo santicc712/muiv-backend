@@ -21,6 +21,7 @@ from redis.commands.json.path import Path
 import aiofiles
 from get_filepaths import get_filepaths_with_oswalk
 import boto3
+from openpyxl import Workbook
 
 
 UPLOAD_FOLDER = 'static/uploads'
@@ -45,7 +46,7 @@ data = dict(
     region_name=config.AWS_DEFAULT_REGION
 )
 
-sqs = boto3.client('s3', **data)
+sqs = boto3.client('sqs', **data)
 s3 = boto3.resource('s3', **data)
 
 def upload_static_file(file_path, key):
@@ -401,12 +402,48 @@ async def send_done_campaign_users():
         user_wallets = open_session.execute(
             select(models.sql.UserWallet).filter_by(campaign_id=campaign_id))
         user_wallets: typing.List[models.sql.UserWallet] = user_wallets.scalars().all()
+    #
+    # file = f"done_users_{campaign_id}.txt"
+    # async with aiofiles.open(file, mode='w') as f:
+    #     for user in done_campaign_users:
+    #         user_wallet = [i.wallet for i in user_wallets if i.user_id == user.user_id]
+    #         await f.write(f"{user.username}|{user.user_id}|{user_wallet}\n")
 
-    file = f"users_{campaign_id}.txt"
-    async with aiofiles.open(file, mode='w') as f:
-        for user in done_campaign_users:
-            user_wallet = [i.wallet for i in user_wallets if i.user_id == user.user_id]
-            await f.write(f"{user.username}|{user.user_id}|{user_wallet}\n")
+    list_subjects = ["user_id", "username", "wallet",]
+
+    date_time_2 = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    file = f"users_{campaign_id}_{date_time_2}.xlsx"
+
+    # async with session() as open_session:
+    #     users_from_db = await open_session.execute(select(models.sql.User))
+    #     users: typing.List[models.sql.User] = users_from_db.scalars().all()
+
+    wb = Workbook()
+    ws = wb.active
+
+    tree_data = []
+    tree_data.append(list_subjects)
+
+    for user in done_campaign_users:
+        user_wallet = [i.wallet for i in user_wallets if i.user_id == user.user_id]
+        if user_wallet:
+            user_wallet = user_wallet[0]
+        else:
+            user_wallet = "null"
+
+        tree_data.append([user.user_id, user.username, f"{user_wallet}"])
+    # for col_num, column_title in enumerate(list_subjects, 1):
+    #     col_letter = ws.cell(row=1, column=col_num)
+    #     col_letter.value = column_title
+    #
+    # for row_num, row_data in enumerate(done_campaign_users, 2):
+    #     cell = ws.cell(row=1, column=row_num)
+    #     cell.value = row_data.user_id
+
+    for row in tree_data:
+        ws.append(row)
+
+    wb.save(file)
 
     await bot.send_document(
         chat_id=user_id,
@@ -449,12 +486,15 @@ async def get_done_campaigns():
             time_unit = ""
             time_left_value = 0
 
+            print(c)
             with session() as open_session:
                 done_campaign = open_session.execute(select(models.sql.Campaign).filter_by(id=c))
                 done_campaign: models.sql.Campaign = done_campaign.scalars().first()
 
+
             if str(done_campaign.finish_date) == "active":
                 time_left_value = 999
+
             elif (re.findall("\d{2}/\d{2}/\d{4}", str(done_campaign.finish_date))
                     and re.findall("\d{2}:\d{2}", str(done_campaign.finish_time))):
                 finish_datetime_str = done_campaign.finish_date + " " + done_campaign.finish_time
@@ -569,6 +609,7 @@ async def uploadTaskStory():
 @app.post("/api/getStories")
 async def get_stories():
     data = request.json
+    print(data["story_id"])
     folder_name = f"static/stories/{data['story_id']}"
     response = sqs.list_objects(Bucket=bucket_name, Prefix=folder_name)
     stories = [get_static_file_url(obj['Key']) for obj in response['Contents'] if obj['Key'].endswith('.jpg')]
