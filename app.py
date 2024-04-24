@@ -46,7 +46,7 @@ data = dict(
     region_name=config.AWS_DEFAULT_REGION
 )
 
-sqs = boto3.client('sqs', **data)
+sqs = boto3.client('s3', **data)
 s3 = boto3.resource('s3', **data)
 
 def upload_static_file(file_path, key):
