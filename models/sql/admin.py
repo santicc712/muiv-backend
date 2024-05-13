@@ -10,5 +10,3 @@ class Admin(Base):
     index = Column(Integer, primary_key=True)
     id = Column(BigInteger)
 
-
-
