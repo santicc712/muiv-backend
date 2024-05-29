@@ -71,14 +71,13 @@ async def check_balance():
     return jsonify(dict(balance=balance))
 
 
-@app.get("/api/getAdmins")
-async def get_admins():
-    with session() as open_session:
-        admins = open_session.execute(select(models.sql.Admin))
-        admins: typing.List[models.sql.Admin] = admins.scalars().all()
-        admins: list[int] = [i.id for i in admins]
+@app.post("/api/getReferralLink")
+async def get_referral_link():
+    user_id = request.json["user_id"]
+    print(user_id)
+    referral_link = f"https://t.me/CashPetBot?start=owner_referral_{user_id}"
 
-    return jsonify(dict(admins=admins))
+    return jsonify(dict(referral_link=referral_link))
 
 
 if __name__ == "__main__":
