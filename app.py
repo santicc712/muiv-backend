@@ -71,15 +71,6 @@ async def check_balance():
     return jsonify(dict(balance=balance))
 
 
-@app.post("/api/getReferralLink")
-async def get_referral_link():
-    user_id = request.json["user_id"]
-    print(user_id)
-    referral_link = f"https://t.me/CashPetBot?start=owner_referral_{user_id}"
-
-    return jsonify(dict(referral_link=referral_link))
-
-
 if __name__ == "__main__":
     app.run("localhost", port=5001)
 
