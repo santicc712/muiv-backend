@@ -46,31 +46,6 @@ async def check_init_data():
     return data.model_dump_json()
 
 
-@app.post("/api/topUpBalance")
-async def top_up_balance():
-    replenishment = request.json["replenishment"]
-    user_id = request.json["user_id"]
-    print(user_id)
-    with session() as open_session:
-        user = open_session.execute(select(models.sql.User).filter_by(id=user_id))
-        user = user.scalars().first()
-        new_check = int(user.check) + int(replenishment)
-        user.check = new_check
-        open_session.commit()
-    return jsonify(dict(balance=new_check))
-
-
-@app.post("/api/viewBalance")
-async def check_balance():
-    user_id = request.json["user_id"]
-    with session() as open_session:
-        user = open_session.execute(select(models.sql.User).filter_by(id=user_id))
-        user = user.scalars().first()
-        balance = int(user.check)
-
-    return jsonify(dict(balance=balance))
-
-
 if __name__ == "__main__":
     app.run("localhost", port=5001)
 
