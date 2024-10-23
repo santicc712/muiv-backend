@@ -46,6 +46,48 @@ async def check_init_data():
     return data.model_dump_json()
 
 
+@app.post("/api/v1/user_info_tasks/{id}")
+async def user_info_tasks(id: int):
+    with session() as open_session:
+        user = open_session.query(models.sql.User).filter(models.sql.User.id == id).first()
+
+        if not user:
+            return jsonify({"error": "User not found"}), 404
+
+        telegram_channel_one = user.channel_one
+        telegram_channel_two = user.channel_two
+        instagram_channel = user.channel_inst
+
+        referral_ids = open_session.query(models.sql.OwnerReferral.referral_user_id).filter(
+            models.sql.OwnerReferral.owner_user_id == user.id).all()
+
+        if not referral_ids:
+            referral_list = []
+        else:
+            referrals = open_session.query(models.sql.User).filter(
+                models.sql.User.id.in_([referral_id[0] for referral_id in referral_ids])).all()
+
+            referral_list = [
+                {
+                    "id": referral.id,
+                    "username": referral.username,
+                    "money": referral.money,
+                    "lvl": referral.lvl
+                }
+                for referral in referrals
+            ]
+        response_data = {
+            "id": user.id,
+            "referralLink": user.referral_link,
+            "telegramChannelOne": telegram_channel_one,
+            "telegramChannelTwo": telegram_channel_two,
+            "instagramChannel": instagram_channel,
+            "referrals": referral_list
+        }
+
+        return jsonify(response_data)
+
+
 if __name__ == "__main__":
     app.run("localhost", port=5001)
 
