@@ -1,21 +1,9 @@
-import asyncio
-import logging
-import os
-import re
-import typing
-import requests
-from validators import card
-
 import config
-from flask import Flask, jsonify, request, Response
+from flask import Flask, jsonify, request, Response, abort
 from aiogram import Bot, types
 from flask import Flask, flash, request, redirect, url_for
 from werkzeug.utils import secure_filename
 import validator
-import redis
-from aiogram.utils.keyboard import InlineKeyboardBuilder, InlineKeyboardButton
-from datetime import datetime
-import tools
 import database
 from sqlalchemy import select
 import models
@@ -132,6 +120,30 @@ async def get_cards_info(id: int):
         ]
 
         return {"cards": cards_list}
+
+
+@app.route("/api/v1/buy_card/<int:user_id>/<int:card_id>", methods=["POST"])
+async def get_buy_card(user_id: int, card_id: int):
+    with session() as open_session:
+
+        card = open_session.query(models.sql.Cards).filter(models.sql.Cards.card_id == card_id).first()
+
+        if not card:
+            abort(404, description="Card not found")
+
+        existing_purchase = open_session.query(models.sql.UserPurchased).filter(
+            models.sql.UserPurchased.id == user_id,
+            models.sql.UserPurchased.card_id == card_id
+        ).first()
+
+        if existing_purchase:
+            abort(400, description="Card already purchased")
+
+        new_purchase = models.sql.UserPurchased(id=user_id, card_id=card_id)
+        open_session.add(new_purchase)
+        open_session.commit()
+
+        return {"status": "success", "message": "Card purchased successfully"}
 
 
 if __name__ == "__main__":
