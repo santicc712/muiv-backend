@@ -5,12 +5,20 @@ from aiogram import Bot, types
 import validator
 import database
 import models
+import eventlet
 
+# Патчим стандартные библиотеки для асинхронности
+eventlet.monkey_patch()
+
+# Настройка Flask приложения
 app = Flask(__name__, static_folder="static", static_url_path='/api/static/')
 app.config['UPLOAD_FOLDER'] = 'static/uploads'
 app.config['SECRET_KEY'] = 'your_secret_key'
-socketio = SocketIO(app)
 
+# Используем eventlet для асинхронности
+socketio = SocketIO(app, async_mode='eventlet', cors_allowed_origins="*")
+
+# Подключаемся к базе данных
 db = database.implement.PostgreSQL(
     database_name=config.POSTGRESQL_DBNAME,
     username=config.POSTGRESQL_USER,
@@ -20,6 +28,7 @@ db = database.implement.PostgreSQL(
 )
 session = database.manager.create_session(db)
 
+# Маршруты API
 @app.post("/api/checkInitData")
 async def check_init_data():
     data = request.json
@@ -33,13 +42,12 @@ async def user_info_tasks(id: int):
         if not user:
             return jsonify({"error": "User not found"}), 404
 
-        # Get user details
         response_data = {
             "id": user.id,
             "referralLink": user.referral_link,
             "money": user.money,
             "lvl": user.lvl,
-            "profit": user.profit  # Assuming 'profit' is an attribute of User
+            "profit": user.profit
         }
 
         return jsonify(response_data)
@@ -104,6 +112,7 @@ async def get_buy_card(user_id: int, card_id: int):
 
         return {"status": "success", "message": "Card purchased successfully"}
 
+# Обработка WebSocket соединений
 @socketio.on('connect')
 def handle_connect():
     print('Client connected')
@@ -124,5 +133,10 @@ def handle_request_update(user_id):
 def handle_disconnect():
     print('Client disconnected')
 
+@socketio.on('ping')
+def pongResponse(data):  # Принимаем аргумент, даже если он не используется
+    socketio.emit('pong')
+
 if __name__ == "__main__":
+    # Запуск серверного приложения с поддержкой WebSocket
     socketio.run(app, host="localhost", port=5001, allow_unsafe_werkzeug=True)
