@@ -4,13 +4,13 @@ from datetime import datetime
 Base = declarative_base()
 
 
-class Cards(Base):
-    __tablename__ = "cards"
+class Goods(Base):
+    __tablename__ = "goods"
 
     index = Column(Integer, primary_key=True)
-    card_id = Column(BigInteger)
-    category = Column(String)
-    photo_url = Column(String)
+    goods_id = Column(BigInteger)
     title = Column(String)
-    profit = Column(Float)
+    description = Column(String)
+    grams = Column(String)
+    photo_url = Column(String)
     price = Column(BigInteger)

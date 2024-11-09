@@ -1,8 +1,5 @@
 import os
 from environs import Env
-import tools
-import models
-
 
 env = Env()
 env.read_env()
