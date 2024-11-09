@@ -1,10 +1,13 @@
+import json
+import os
 from flask import Flask, jsonify, request
 import config
 import database
 import models
+from werkzeug.utils import secure_filename
 
 UPLOAD_FOLDER = 'static/uploads'
-ALLOWED_EXTENSIONS = {'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif'}
+ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif'}
 app = Flask(__name__, static_folder="static", static_url_path='/api/static/')
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
@@ -16,6 +19,10 @@ db = database.implement.PostgreSQL(
     port=config.POSTGRESQL_PORT
 )
 session = database.manager.create_session(db)
+
+
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
 
 @app.get("/api/v1/get_cards")
@@ -48,13 +55,15 @@ async def get_cards():
 
 @app.post("/api/v1/add_card")
 async def add_card():
-    data = request.json
+    good_data = request.form.get("good")
+    file = request.files.get("file")
 
-    good_data = data.get("good")
-    if not good_data:
-        return jsonify({"error"}), 400
+    if not file or not good_data:
+        return jsonify({"error": "error"}), 400
 
-    additions_data = data.get("additions", [])
+    good_data = json.loads(good_data)
+    filename = f"goods_{good_data['goods_id']}.jpg"
+    file.save(os.path.join(app.config['UPLOAD_FOLDER'], filename))
 
     with session() as open_session:
         new_good = models.sql.Goods(
@@ -62,12 +71,13 @@ async def add_card():
             title=good_data["title"],
             description=good_data["description"],
             grams=good_data["grams"],
-            photo_url=good_data["photo_url"],
+            photo_url=f"/static/uploads/{filename}",
             price=good_data["price"]
         )
         open_session.add(new_good)
         open_session.commit()
 
+        additions_data = json.loads(request.form.get("additions", "[]"))
         for addition_data in additions_data:
             new_addition = models.sql.Additions(
                 goods_id=new_good.goods_id,
@@ -76,10 +86,9 @@ async def add_card():
                 price=addition_data["price"]
             )
             open_session.add(new_addition)
-
         open_session.commit()
 
-    return jsonify({"message": "success"}), 201
+    return jsonify({"message": "Card added successfully"}), 201
 
 
 @app.delete("/api/v1/delete_card/<int:card_id>")
@@ -88,14 +97,17 @@ async def delete_card(card_id):
         card = open_session.query(models.sql.Goods).filter_by(goods_id=card_id).first()
 
         if not card:
-            return jsonify({"error": "no card"}), 404
+            return jsonify({"error": "no card found"}), 404
 
         open_session.query(models.sql.Additions).filter_by(goods_id=card_id).delete()
+
+        if card.photo_url:
+            os.remove(os.path.join(app.config['UPLOAD_FOLDER'], card.photo_url.split('/')[-1]))
 
         open_session.delete(card)
         open_session.commit()
 
-    return jsonify({"message": "card delete"}), 200
+    return jsonify({"message": "card deleted"}), 200
 
 
 if __name__ == "__main__":
