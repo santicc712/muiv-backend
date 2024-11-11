@@ -1,12 +1,16 @@
+import os
+
 from flask import Flask, jsonify, request
+from werkzeug.utils import secure_filename
+
 import config
 import database
 import models
 
 UPLOAD_FOLDER = 'static/uploads'
-ALLOWED_EXTENSIONS = {'txt', 'pdf', 'png', 'jpg', 'jpeg', 'gif'}
 app = Flask(__name__, static_folder="static", static_url_path='/api/static/')
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+app.config['ALLOWED_EXTENSIONS'] = {'jpg', 'jpeg', 'png', 'gif'}
 
 db = database.implement.PostgreSQL(
     database_name=config.POSTGRESQL_DBNAME,
@@ -46,41 +50,69 @@ async def get_cards():
         return jsonify(goods_with_additions)
 
 
-@app.post("/api/v1/add_card")
-async def add_card():
-    data = request.json
+def allowed_file(filename):
+    return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
 
-    good_data = data.get("good")
-    if not good_data:
-        return jsonify({"error"}), 400
+@app.route('/api/v1/add_card', methods=['POST'])
+def add_card():
+    # Получаем данные из формы
+    good_goods_id = request.form.get('good[goods_id]')
+    good_title = request.form.get('good[title]')
+    good_description = request.form.get('good[description]')
+    good_grams = request.form.get('good[grams]')
+    good_price = request.form.get('good[price]')
 
-    additions_data = data.get("additions", [])
+    # Обработка файла (фото товара)
+    photo_url = request.files.get('good[photo_url]')
+    if photo_url and allowed_file(photo_url.filename):
+        filename = secure_filename(photo_url.filename)
+        photo_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        photo_url.save(photo_path)
+    else:
+        return jsonify({"error": "Invalid photo file"}), 400
+
+    # Создание нового товара
+    new_good = models.sql.Goods(
+        goods_id=good_goods_id,
+        title=good_title,
+        description=good_description,
+        grams=good_grams,
+        price=good_price,
+        photo_url=photo_path  # Ссылка на сохраненное фото
+    )
 
     with session() as open_session:
-        new_good = models.sql.Goods(
-            goods_id=good_data["goods_id"],
-            title=good_data["title"],
-            description=good_data["description"],
-            grams=good_data["grams"],
-            photo_url=good_data["photo_url"],
-            price=good_data["price"]
-        )
-        open_session.add(new_good)
-        open_session.commit()
+        open_session.add(new_good)  # Добавляем товар в сессию
+        open_session.commit()  # Сохраняем изменения в базе
 
-        for addition_data in additions_data:
-            new_addition = models.sql.Additions(
-                goods_id=new_good.goods_id,
-                additions_id=addition_data["additions_id"],
-                title=addition_data["title"],
-                price=addition_data["price"]
+        # Обработка дополнений
+        additions = request.form.getlist('additions[0][additions_id]')
+        additions_data = []
+        for index in range(len(additions)):
+            addition = models.sql.Additions(
+                goods_id=good_goods_id,
+                additions_id=additions[index],
+                title=request.form.get(f'additions[{index}][title]'),
+                price=request.form.get(f'additions[{index}][price]')
             )
-            open_session.add(new_addition)
+            additions_data.append(addition)
+            open_session.add(addition)  # Добавляем дополнение в сессию
 
-        open_session.commit()
+        open_session.commit()  # Сохраняем изменения для дополнений
 
-    return jsonify({"message": "success"}), 201
-
+    # Отправляем успешный ответ
+    return jsonify({
+        "message": "Товар успешно добавлен!",
+        "good_data": {
+            "goods_id": good_goods_id,
+            "title": good_title,
+            "description": good_description,
+            "grams": good_grams,
+            "price": good_price,
+            "photo_url": photo_path  # Ссылка на сохраненный файл
+        },
+        "additions": additions_data
+    }), 201
 
 @app.delete("/api/v1/delete_card/<int:card_id>")
 async def delete_card(card_id):
