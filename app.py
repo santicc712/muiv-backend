@@ -6,6 +6,7 @@ from werkzeug.utils import secure_filename
 import config
 import database
 import models
+import validator
 
 UPLOAD_FOLDER = 'static/uploads'
 app = Flask(__name__, static_folder="static", static_url_path='/api/static/')
@@ -20,6 +21,14 @@ db = database.implement.PostgreSQL(
     port=config.POSTGRESQL_PORT
 )
 session = database.manager.create_session(db)
+
+
+@app.post("/api/checkInitData")
+async def check_init_data():
+    data = request.json
+    data = validator.safe_parse_webapp_init_data(config.BOT_TOKEN, data["_auth"])
+
+    return data.model_dump_json()
 
 
 @app.get("/api/v1/get_cards")
@@ -55,14 +64,12 @@ def allowed_file(filename):
 
 @app.route('/api/v1/add_card', methods=['POST'])
 def add_card():
-    # Получаем данные из формы
     good_goods_id = request.form.get('good[goods_id]')
     good_title = request.form.get('good[title]')
     good_description = request.form.get('good[description]')
     good_grams = request.form.get('good[grams]')
     good_price = request.form.get('good[price]')
 
-    # Обработка файла (фото товара)
     photo_url = request.files.get('good[photo_url]')
     if photo_url and allowed_file(photo_url.filename):
         filename = secure_filename(photo_url.filename)
@@ -71,21 +78,19 @@ def add_card():
     else:
         return jsonify({"error": "Invalid photo file"}), 400
 
-    # Создание нового товара
     new_good = models.sql.Goods(
         goods_id=good_goods_id,
         title=good_title,
         description=good_description,
         grams=good_grams,
         price=good_price,
-        photo_url=photo_path  # Ссылка на сохраненное фото
+        photo_url=photo_path
     )
 
     with session() as open_session:
-        open_session.add(new_good)  # Добавляем товар в сессию
-        open_session.commit()  # Сохраняем изменения в базе
+        open_session.add(new_good)
+        open_session.commit()
 
-        # Обработка дополнений
         additions = request.form.getlist('additions[0][additions_id]')
         additions_data = []
         for index in range(len(additions)):
@@ -96,11 +101,10 @@ def add_card():
                 price=request.form.get(f'additions[{index}][price]')
             )
             additions_data.append(addition)
-            open_session.add(addition)  # Добавляем дополнение в сессию
+            open_session.add(addition)
 
-        open_session.commit()  # Сохраняем изменения для дополнений
+        open_session.commit()
 
-    # Отправляем успешный ответ
     return jsonify({
         "message": "Товар успешно добавлен!",
         "good_data": {
@@ -109,7 +113,7 @@ def add_card():
             "description": good_description,
             "grams": good_grams,
             "price": good_price,
-            "photo_url": photo_path  # Ссылка на сохраненный файл
+            "photo_url": photo_path
         },
         "additions": additions_data
     }), 201
