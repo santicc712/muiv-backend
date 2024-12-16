@@ -1,8 +1,10 @@
+import hashlib
 import os
-
+import ssl
+import aiohttp
+import certifi
 from flask import Flask, jsonify, request
 from werkzeug.utils import secure_filename
-
 import config
 import database
 import models
@@ -132,6 +134,123 @@ async def delete_card(card_id):
         open_session.commit()
 
     return jsonify({"message": "card delete"}), 200
+
+
+def generate_tinkoff_token(terminal_key, amount=None, order_id=None, description=None, payment_id=None, password=None):
+    params = {
+        "TerminalKey": terminal_key,
+        "Password": password
+    }
+    if amount is not None:
+        params["Amount"] = str(amount)
+    if order_id is not None:
+        params["OrderId"] = order_id
+    if description is not None:
+        params["Description"] = description
+    if payment_id is not None:
+        params["PaymentId"] = payment_id
+
+    concatenated_values = ''.join(params[key] for key in sorted(params.keys()))
+    token = hashlib.sha256(concatenated_values.encode('utf-8')).hexdigest()
+    return token
+
+
+@app.post("/api/v1/init_payment")
+async def init_payment():
+    data = request.json
+    user_id = data.get("user_id")
+    goods_id = data.get("goods_id")
+    price = data.get("price")
+
+    with session() as open_session:
+        goods = open_session.query(models.sql.Goods).filter_by(id=goods_id).first()
+        if not goods:
+            return jsonify({"error": "Товар не найден"}), 404
+
+        terminal_key = config.TERMINAL_KEY
+        password = config.PASSWORD
+        order_id = f"{goods_id}_{user_id}"
+        amount = int(goods_id.price * 100)
+        description = f"Payment for quest {goods_id}"
+
+        token = generate_tinkoff_token(terminal_key, amount, order_id, description, password=password)
+
+        receipt = {
+            "Email": "user@example.com",
+            "Phone": "+71234567890",
+            "Taxation": "osn",
+            "Items": [
+                {
+                    "Name": f"Подарок {goods_id}",
+                    "Price": amount,
+                    "Quantity": 1.00,
+                    "Amount": amount,
+                    "Tax": "none",
+                }
+            ]
+        }
+
+        params = {
+            "TerminalKey": terminal_key,
+            "Amount": amount,
+            "OrderId": order_id,
+            "Description": description,
+            "Token": token,
+            "Receipt": receipt,
+            "DATA": {
+                "Phone": "+71234567890",
+                "Email": "user@example.com"
+            }
+        }
+
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
+            async with session.post("https://securepay.tinkoff.ru/v2/Init", json=params) as response:
+                payment_data = await response.json()
+
+                if payment_data.get("Success"):
+                    payment_id = payment_data.get("PaymentId")
+                    payment_url = payment_data.get("PaymentURL")
+                    return jsonify({
+                        "payment_url": payment_url,
+                        "payment_id": payment_id,
+                        "message": "Payment initialized successfully."
+                    })
+                else:
+                    return jsonify({
+                        "error": "Error initializing payment",
+                        "message": payment_data.get("Message", "Unknown error")
+                    }), 500
+
+
+@app.post("/api/v1/confirm_payment")
+async def confirm_payment():
+    data = request.json
+    payment_id = data.get("payment_id")
+    order_id = data.get("order_id")
+
+    terminal_key = config.TERMINAL_KEY
+    password = config.PASSWORD
+    token = generate_tinkoff_token(terminal_key, payment_id=payment_id, password=password)
+
+    params = {
+        "TerminalKey": terminal_key,
+        "PaymentId": payment_id,
+        "Token": token
+    }
+
+    ssl_context = ssl.create_default_context(cafile=certifi.where())
+    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
+        async with session.post("https://securepay.tinkoff.ru/v2/GetState", json=params) as response:
+            payment_data = await response.json()
+
+            if payment_data.get("Success") and payment_data.get("Status") == "CONFIRMED":
+                quest_id = order_id.split('_')[0]
+                user_id = order_id.split('_')[1]
+
+                return jsonify({"message": "Payment confirmed and quest booked successfully."})
+            else:
+                return jsonify({"error": "Payment not confirmed."}), 400
 
 
 if __name__ == "__main__":
