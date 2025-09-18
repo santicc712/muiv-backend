@@ -4,11 +4,18 @@ import ssl
 import aiohttp
 import certifi
 from flask import Flask, jsonify, request
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy import create_engine
 from werkzeug.utils import secure_filename
 import config
 import database
 import models
 import validator
+from models.sql.Question import Questions
+from datetime import datetime
+
+engine = create_engine("sqlite:///muiv.db", echo=True)
+SessionLocal = sessionmaker(bind=engine)
 
 UPLOAD_FOLDER = 'static/uploads'
 app = Flask(__name__, static_folder="static", static_url_path='/api/static/')
@@ -29,228 +36,307 @@ session = database.manager.create_session(db)
 async def check_init_data():
     data = request.json
     data = validator.safe_parse_webapp_init_data(config.BOT_TOKEN, data["_auth"])
-
+    print(data.model_dump_json())
     return data.model_dump_json()
 
+# --- Эндпоинт для отправки вопроса ---
+@app.post("/api/questions")
+async def submit_question():
+    data = request.json
 
-@app.get("/api/v1/get_cards")
-async def get_cards():
-    with session() as open_session:
-        goods = open_session.query(models.sql.Goods).all()
-        goods_with_additions = []
+    # Проверка обязательных полей
+    required_fields = ["role", "fio", "topic", "phone", "message"]
+    for field in required_fields:
+        if field not in data or not data[field]:
+            return jsonify({"status": "error", "message": f"Поле '{field}' обязательно"}), 400
 
-        for good in goods:
-            additions = open_session.query(models.sql.Additions).filter_by(goods_id=good.goods_id).all()
-            good_data = {
-                "goods_id": good.goods_id,
-                "title": good.title,
-                "description": good.description,
-                "grams": good.grams,
-                "photo_url": good.photo_url,
-                "price": good.price,
-                "additions": [
-                    {
-                        "additions_id": addition.additions_id,
-                        "title": addition.title,
-                        "price": addition.price
-                    } for addition in additions
-                ]
+    # Если студент, то проверяем поле group
+    if data.get("role") == "student" and not data.get("group"):
+        return jsonify({"status": "error", "message": "Поле 'group' обязательно для студентов"}), 400
+
+    try:
+        # Создаём объект Question
+        question = Questions(
+            role=data["role"],
+            fio=data["fio"],
+            topic=data["topic"],
+            group=data.get("group"),
+            phone=data["phone"],
+            message=data["message"],
+            created_at=datetime.utcnow()
+        )
+
+        # Сохраняем в БД
+        session.add(question)
+        session.commit()
+
+        return jsonify({
+            "status": "success",
+            "message": "Ваш вопрос отправлен. В скором времени с вами свяжутся."
+        }), 200
+
+    except Exception as e:
+        session.rollback()
+        return jsonify({"status": "error", "message": f"Ошибка сохранения: {str(e)}"}), 500
+
+
+@app.get("/api/questions")
+async def get_questions():
+    try:
+        questions = session.query(Questions).all()
+
+        result = [
+            {
+                "id": q.id,
+                "role": q.role,
+                "fio": q.fio,
+                "topic": q.topic,
+                "group": q.group,
+                "phone": q.phone,
+                "message": q.message,
+                "created_at": q.created_at.strftime("%Y-%m-%d %H:%M:%S")
             }
-            goods_with_additions.append(good_data)
+            for q in questions
+        ]
 
-        return jsonify(goods_with_additions)
+        return jsonify(result), 200
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка получения данных: {str(e)}"}), 500
 
 
-def allowed_file(filename):
-    return '.' in filename and filename.rsplit('.', 1)[1].lower() in app.config['ALLOWED_EXTENSIONS']
-
-@app.route('/api/v1/add_card', methods=['POST'])
-def add_card():
-    good_goods_id = request.form.get('good[goods_id]')
-    good_title = request.form.get('good[title]')
-    good_description = request.form.get('good[description]')
-    good_grams = request.form.get('good[grams]')
-    good_price = request.form.get('good[price]')
-
-    photo_url = request.files.get('good[photo_url]')
-    if photo_url and allowed_file(photo_url.filename):
-        filename = secure_filename(photo_url.filename)
-        photo_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-        photo_url.save(photo_path)
-    else:
-        return jsonify({"error": "Invalid photo file"}), 400
-
-    new_good = models.sql.Goods(
-        goods_id=good_goods_id,
-        title=good_title,
-        description=good_description,
-        grams=good_grams,
-        price=good_price,
-        photo_url=photo_path
-    )
-
-    with session() as open_session:
-        open_session.add(new_good)
-        open_session.commit()
-
-        additions = request.form.getlist('additions[0][additions_id]')
-        additions_data = []
-        for index in range(len(additions)):
-            addition = models.sql.Additions(
-                goods_id=good_goods_id,
-                additions_id=additions[index],
-                title=request.form.get(f'additions[{index}][title]'),
-                price=request.form.get(f'additions[{index}][price]')
-            )
-            additions_data.append(addition)
-            open_session.add(addition)
-
-        open_session.commit()
-
-    return jsonify({
-        "message": "Товар успешно добавлен!",
-        "good_data": {
-            "goods_id": good_goods_id,
-            "title": good_title,
-            "description": good_description,
-            "grams": good_grams,
-            "price": good_price,
-            "photo_url": photo_path
+# --- Эндпоинт для FAQ ---
+@app.get("/api/faq")
+async def get_faq():
+    faq = [
+        {
+            "id": 1,
+            "title": "Аккредитация",
+            "link": "https://site/faq/accreditation"
         },
-        "additions": additions_data
-    }), 201
-
-@app.delete("/api/v1/delete_card/<int:card_id>")
-async def delete_card(card_id):
-    with session() as open_session:
-        card = open_session.query(models.sql.Goods).filter_by(goods_id=card_id).first()
-
-        if not card:
-            return jsonify({"error": "no card"}), 404
-
-        open_session.query(models.sql.Additions).filter_by(goods_id=card_id).delete()
-
-        open_session.delete(card)
-        open_session.commit()
-
-    return jsonify({"message": "card delete"}), 200
-
-
-def generate_tinkoff_token(terminal_key, amount=None, order_id=None, description=None, payment_id=None, password=None):
-    params = {
-        "TerminalKey": terminal_key,
-        "Password": password
-    }
-    if amount is not None:
-        params["Amount"] = str(amount)
-    if order_id is not None:
-        params["OrderId"] = order_id
-    if description is not None:
-        params["Description"] = description
-    if payment_id is not None:
-        params["PaymentId"] = payment_id
-
-    concatenated_values = ''.join(params[key] for key in sorted(params.keys()))
-    token = hashlib.sha256(concatenated_values.encode('utf-8')).hexdigest()
-    return token
-
-
-@app.post("/api/v1/init_payment")
-async def init_payment():
-    data = request.json
-    user_id = data.get("user_id")
-    goods_id = data.get("goods_id")
-    price = data.get("price")
-
-    with session() as open_session:
-        goods = open_session.query(models.sql.Goods).filter_by(id=goods_id).first()
-        if not goods:
-            return jsonify({"error": "Товар не найден"}), 404
-
-        terminal_key = config.TERMINAL_KEY
-        password = config.PASSWORD
-        order_id = f"{goods_id}_{user_id}"
-        amount = int(goods_id.price * 100)
-        description = f"Payment for quest {goods_id}"
-
-        token = generate_tinkoff_token(terminal_key, amount, order_id, description, password=password)
-
-        receipt = {
-            "Email": "user@example.com",
-            "Phone": "+71234567890",
-            "Taxation": "osn",
-            "Items": [
-                {
-                    "Name": f"Подарок {goods_id}",
-                    "Price": amount,
-                    "Quantity": 1.00,
-                    "Amount": amount,
-                    "Tax": "none",
-                }
-            ]
+        {
+            "id": 2,
+            "title": "Набор на обучение",
+            "link": "https://site/faq/admission"
+        },
+        {
+            "id": 3,
+            "title": "Процедура поступления",
+            "link": "https://site/faq/enrollment"
+        },
+        {
+            "id": 4,
+            "title": "Оплата обучения",
+            "link": "https://site/faq/payment"
         }
-
-        params = {
-            "TerminalKey": terminal_key,
-            "Amount": amount,
-            "OrderId": order_id,
-            "Description": description,
-            "Token": token,
-            "Receipt": receipt,
-            "DATA": {
-                "Phone": "+71234567890",
-                "Email": "user@example.com"
-            }
-        }
-
-        ssl_context = ssl.create_default_context(cafile=certifi.where())
-        async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
-            async with session.post("https://securepay.tinkoff.ru/v2/Init", json=params) as response:
-                payment_data = await response.json()
-
-                if payment_data.get("Success"):
-                    payment_id = payment_data.get("PaymentId")
-                    payment_url = payment_data.get("PaymentURL")
-                    return jsonify({
-                        "payment_url": payment_url,
-                        "payment_id": payment_id,
-                        "message": "Payment initialized successfully."
-                    })
-                else:
-                    return jsonify({
-                        "error": "Error initializing payment",
-                        "message": payment_data.get("Message", "Unknown error")
-                    }), 500
+    ]
+    return jsonify(faq), 200
 
 
-@app.post("/api/v1/confirm_payment")
-async def confirm_payment():
+# --- (Опционально) список тем обращения ---
+@app.get("/api/topics")
+async def get_topics():
+    topics = [
+        {"id": 1, "name": "Общее"},
+        {"id": 2, "name": "Учебный процесс"},
+        {"id": 3, "name": "Документы"},
+        {"id": 4, "name": "Оплата"},
+    ]
+    return jsonify(topics), 200
+
+
+# --- (Опционально) список групп ---
+@app.get("/api/groups")
+async def get_groups():
+    groups = [
+        {"id": 1, "name": "БИ-101"},
+        {"id": 2, "name": "БИ-102"},
+        {"id": 3, "name": "ПМИ-201"},
+    ]
+    return jsonify(groups), 200
+
+# --- Эндпоинт авторизации сотрудника ---
+@app.post("/api/staff/login")
+async def staff_login():
     data = request.json
-    payment_id = data.get("payment_id")
-    order_id = data.get("order_id")
 
-    terminal_key = config.TERMINAL_KEY
-    password = config.PASSWORD
-    token = generate_tinkoff_token(terminal_key, payment_id=payment_id, password=password)
+    # Проверка обязательных полей
+    required_fields = ["login", "password"]
+    for field in required_fields:
+        if field not in data or not data[field]:
+            return jsonify({"status": "error", "message": f"Поле '{field}' обязательно"}), 400
 
-    params = {
-        "TerminalKey": terminal_key,
-        "PaymentId": payment_id,
-        "Token": token
-    }
+    try:
+        # Простейшая проверка (для примера)
+        if data["login"] == "staff" and data["password"] == "1234":
+            return jsonify({"status": "success", "token": "staff-fake-token"}), 200
+        else:
+            return jsonify({"status": "error", "message": "Неверный логин или пароль"}), 401
 
-    ssl_context = ssl.create_default_context(cafile=certifi.where())
-    async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
-        async with session.post("https://securepay.tinkoff.ru/v2/GetState", json=params) as response:
-            payment_data = await response.json()
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка авторизации: {str(e)}"}), 500
 
-            if payment_data.get("Success") and payment_data.get("Status") == "CONFIRMED":
-                quest_id = order_id.split('_')[0]
-                user_id = order_id.split('_')[1]
 
-                return jsonify({"message": "Payment confirmed and quest booked successfully."})
-            else:
-                return jsonify({"error": "Payment not confirmed."}), 400
+# --- Эндпоинт для выхода из аккаунта ---
+@app.post("/api/staff/logout")
+async def staff_logout():
+    try:
+        # Тут можно добавить логику очистки сессии
+        return jsonify({"status": "success", "message": "Вы успешно вышли из аккаунта"}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка выхода: {str(e)}"}), 500
+
+
+# --- Эндпоинт получения списка обращений (с поиском) ---
+@app.get("/api/staff/requests")
+async def get_requests():
+    try:
+        search = request.args.get("search")  # поиск по номеру обращения
+
+        # Для примера — список статических обращений
+        requests_list = [
+            {"id": 2415, "theme": "Практика", "status": "new"},
+            {"id": 1252, "theme": "Оплата", "status": "in_progress"},
+        ]
+
+        if search:
+            requests_list = [r for r in requests_list if str(r["id"]) == search]
+
+        return jsonify(requests_list), 200
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка получения списка обращений: {str(e)}"}), 500
+
+
+# --- Эндпоинт получения деталей обращения ---
+@app.get("/api/staff/requests/<int:request_id>")
+async def get_request_detail(request_id):
+    try:
+        # В реальности данные подтягиваются из БД
+        request_data = {
+            "id": request_id,
+            "fio": "Иванов Иван Иванович",
+            "role": "student",
+            "group": "ИвСС20.19",
+            "theme": "Практика",
+            "message": "Возможно ли пройти практику в университете? Какие нужны документы?",
+        }
+        return jsonify(request_data), 200
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка получения данных обращения: {str(e)}"}), 500
+
+
+# --- Эндпоинт ответа на обращение ---
+@app.post("/api/staff/requests/<int:request_id>/answer")
+async def answer_request(request_id):
+    data = request.json
+
+    if "answer" not in data or not data["answer"]:
+        return jsonify({"status": "error", "message": "Поле 'answer' обязательно"}), 400
+
+    try:
+        # В реальности сохраняем ответ в БД
+        return jsonify({
+            "status": "success",
+            "message": f"Ответ на обращение №{request_id} сохранён",
+            "answer": data["answer"]
+        }), 200
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка сохранения ответа: {str(e)}"}), 500
+
+# --- Эндпоинт авторизации администратора (через общую форму) ---
+@app.post("/api/admin/login")
+async def admin_login():
+    data = request.json
+
+    required_fields = ["login", "password"]
+    for field in required_fields:
+        if field not in data or not data[field]:
+            return jsonify({"status": "error", "message": f"Поле '{field}' обязательно"}), 400
+
+    try:
+        # Пример проверки
+        if data["login"] == "admin" and data["password"] == "admin123":
+            return jsonify({
+                "status": "success",
+                "token": "admin-fake-token",
+                "role": "admin"
+            }), 200
+        else:
+            return jsonify({"status": "error", "message": "Неверный логин или пароль"}), 401
+
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка авторизации: {str(e)}"}), 500
+
+
+# --- Эндпоинт выхода администратора ---
+@app.post("/api/admin/logout")
+async def admin_logout():
+    try:
+        return jsonify({"status": "success", "message": "Вы вышли из аккаунта администратора"}), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка выхода: {str(e)}"}), 500
+
+
+# --- Эндпоинт получения всех обращений (админ видит всё) ---
+@app.get("/api/admin/requests")
+async def admin_get_requests():
+    try:
+        requests_list = [
+            {"id": 2415, "fio": "Иванов Иван", "theme": "Практика", "status": "new"},
+            {"id": 1252, "fio": "Петров Петр", "theme": "Оплата", "status": "in_progress"},
+        ]
+        return jsonify(requests_list), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка получения обращений: {str(e)}"}), 500
+
+
+# --- Эндпоинт просмотра деталей обращения ---
+@app.get("/api/admin/requests/<int:request_id>")
+async def admin_get_request_detail(request_id):
+    try:
+        request_data = {
+            "id": request_id,
+            "fio": "Иванов Иван Иванович",
+            "role": "student",
+            "group": "БИ-101",
+            "theme": "Практика",
+            "message": "Возможно ли пройти практику в университете?",
+            "status": "new"
+        }
+        return jsonify(request_data), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка получения данных: {str(e)}"}), 500
+
+
+# --- Эндпоинт удаления обращения ---
+@app.delete("/api/admin/requests/<int:request_id>")
+async def admin_delete_request(request_id):
+    try:
+        # Здесь удаляем запись из БД
+        return jsonify({
+            "status": "success",
+            "message": f"Обращение №{request_id} удалено"
+        }), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка удаления: {str(e)}"}), 500
+
+
+# --- Эндпоинт статистики обращений ---
+@app.get("/api/admin/stats")
+async def admin_get_stats():
+    try:
+        stats = {
+            "total": 120,
+            "new": 45,
+            "in_progress": 30,
+            "closed": 45
+        }
+        return jsonify(stats), 200
+    except Exception as e:
+        return jsonify({"status": "error", "message": f"Ошибка получения статистики: {str(e)}"}), 500
 
 
 if __name__ == "__main__":
